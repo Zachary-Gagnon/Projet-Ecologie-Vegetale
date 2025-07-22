@@ -1,0 +1,21 @@
+---
+title: "Projet-EcoVeg"
+author: "Gagnon, Zachary; Plasse, Tristan; Marcotte, Loïc; Bussières, Xavier"
+format: pptx
+editor: visual
+---
+
+Vérification et installation des packages manquants si nécessaire
+
+```{r}
+packages_needed<-c("tidyverse", "readxl", "sf", "ggspatial", "patchwork", "janitor", "tinytable", "here", "cowplot") 
+
+packages_to_install <- packages_needed[!(packages_needed %in% installed.packages()[,"Package"])]
+if(length(packages_to_install)) install.packages(packages_to_install)
+```
+
+Importation des données brutes
+
+```{r}
+donnees <- readxl::read_xlsx(here::here("Echantillonnage_sel.xlsx"))
+```

@@ -26,6 +26,16 @@ donnees <- readxl::read_xlsx(here::here("Echantillonnage_sel.xlsx"))
 
 ### Traitement de la base de données pour les analyses statistiques
 
+Premièrement, afin de pouvoir traité chaque espèce/condition dominante autour des points, nous avons divisé l'habitat en plusieurs colonnes. Nous devons donc regroupé ces colonnes au sein d'une seule variable « Habitat »
+
+```{r}
+bdd<-donnees
+bdd$Habitat <- lapply(seq_len(nrow(bdd)), function(i) {
+  na.omit(as.character(bdd[i, c("Habitat1", "Habitat2", "Habitat3")]))
+})
+bdd<-bdd[,!names(bdd) %in% c("Habitat1", "Habitat2", "Habitat3")]
+```
+
 D'abord, plusieurs points n'ont pas pu être échantillonné pour certaines raisons. Nous devons alors exclure ces points de l'analyse statistique
 
 ```{r}

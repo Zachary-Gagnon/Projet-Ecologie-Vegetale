@@ -5,7 +5,7 @@ format: pptx
 editor: visual
 ---
 
-Vérification et installation des packages manquants si nécessaire
+### Vérification et installation des packages manquants si nécessaire
 
 ```{r}
 packages_needed<-c("tidyverse", "readxl", "sf", "ggspatial", "patchwork", "janitor", "tinytable", "here", "cowplot") 
@@ -14,8 +14,32 @@ packages_to_install <- packages_needed[!(packages_needed %in% installed.packages
 if(length(packages_to_install)) install.packages(packages_to_install)
 ```
 
-Importation des données brutes
+------------------------------------------------------------------------
+
+### Importation des données brutes
 
 ```{r}
 donnees <- readxl::read_xlsx(here::here("Echantillonnage_sel.xlsx"))
 ```
+
+------------------------------------------------------------------------
+
+### Traitement de la base de données pour les analyses statistiques
+
+D'abord, plusieurs points n'ont pas pu être échantillonné pour certaines raisons. Nous devons alors exclure ces points de l'analyse statistique
+
+```{r}
+exclus<-unique(donnees[donnees$Poids=="NA",]$Point)
+raisons<-unique(donnees[donnees$Poids=="NA",]$Habitat)
+ntotal<-length(unique(donnees$Point))-length(exclus)
+d_traitees<-donnes[donnees$Poids!="NA",]
+```
+
+On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes.
+
+```{r}
+sel<- donnees[donnees$Sel=="1",]
+sanssel<- donnees[donnees$Sel=="0",]
+```
+
+De plus, on cherche à identifier si le traitement au sel peut également affecté la composition de ces communautés végétales

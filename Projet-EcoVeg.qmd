@@ -20,7 +20,27 @@ if(length(packages_to_install)) install.packages(packages_to_install)
 
 ```{r}
 donnees <- readxl::read_xlsx(here::here("Echantillonnage_sel.xlsx"))
+
+rues<-unique(donnees$Rue)
+for (rue in 1:4) {
+  for (point in 0:29) {
+    subset_donnees <- donnees[donnees$Point == point & donnees$Rue == rues[rue], ]
+    if (nrow(subset_donnees) > 0) {
+      for (i in 17:79) {
+        espece_col <- colnames(donnees)[i]
+        for (j in 1:nrow(subset_donnees)){
+          if (subset_donnees$Espece[j] %in% espece_col){
+          donnees[donnees$Point == point & donnees$Rue == rues[rue],subset_donnees$Espece[j]] <- subset_donnees$Recouvrement[subset_donnees$Espece==subset_donnees$Espece[j]]
+            }
+          }
+        }
+      }
+    }
+  }
+donnees<-donnees[,!names(donnees) %in% c("Espece", "Recouvrement")]
 ```
+
+Ici, nous avons simplement créer un colonne pour chaque espèce retrouvé sur l'ensemble des points afin de pouvoir inscrire le recouvrement de chaque espèce dans sa colonne respective pour chaque point et ainsi obtenir qu'une seule linge par point. Cela rend la manipulation de données plus simple par la suite.
 
 ------------------------------------------------------------------------
 

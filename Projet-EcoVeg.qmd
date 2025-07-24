@@ -70,11 +70,15 @@ bdd<-bdd[!bdd$Poids=="NA",]
 
 ```
 
+### Analyses statistiques
+
 On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes.
 
 ```{r}
-sel<- donnees[donnees$Sel=="1",]
-sanssel<- donnees[donnees$Sel=="0",]
+sel<-bdd[bdd$Sel==1,]
+sans_sel<-bdd[bdd$Sel==0,]
+#vérificaton de la normalité
+
 ```
 
 De plus, on cherche à identifier si le traitement au sel peut également affecté la composition de ces communautés végétales

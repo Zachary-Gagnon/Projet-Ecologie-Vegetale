@@ -8,7 +8,7 @@ editor: visual
 ### Vérification et installation des packages manquants si nécessaire
 
 ```{r}
-packages_needed<-c("tidyverse", "readxl", "sf", "ggspatial", "patchwork", "janitor", "tinytable", "here", "cowplot") 
+packages_needed<-c("tidyverse", "readxl", "sf", "ggspatial", "patchwork", "janitor", "tinytable", "here", "cowplot", "writexl") 
 
 packages_to_install <- packages_needed[!(packages_needed %in% installed.packages()[,"Package"])]
 if(length(packages_to_install)) install.packages(packages_to_install)
@@ -38,9 +38,16 @@ for (rue in 1:4) {
     }
   }
 donnees<-donnees[,!names(donnees) %in% c("Espece", "Recouvrement")]
+donnees<-unique(donnees)
 ```
 
 Ici, nous avons simplement créer un colonne pour chaque espèce retrouvé sur l'ensemble des points afin de pouvoir inscrire le recouvrement de chaque espèce dans sa colonne respective pour chaque point et ainsi obtenir qu'une seule linge par point. Cela rend la manipulation de données plus simple par la suite.
+
+```{r}
+write_xlsx(donnees,"bdd_equipe4.xlsx")
+```
+
+Pour exporter la base de données afin de la remettre
 
 ------------------------------------------------------------------------
 
@@ -56,13 +63,11 @@ bdd$Habitat <- lapply(seq_len(nrow(bdd)), function(i) {
 bdd<-bdd[,!names(bdd) %in% c("Habitat1", "Habitat2", "Habitat3")]
 ```
 
-D'abord, plusieurs points n'ont pas pu être échantillonné pour certaines raisons. Nous devons alors exclure ces points de l'analyse statistique
+Plusieurs points n'ont pas pu être échantillonné pour certaines raisons. Nous devons alors exclure ces points de l'analyse statistique
 
 ```{r}
-exclus<-unique(donnees[donnees$Poids=="NA",]$Point)
-raisons<-unique(donnees[donnees$Poids=="NA",]$Habitat)
-ntotal<-length(unique(donnees$Point))-length(exclus)
-d_traitees<-donnes[donnees$Poids!="NA",]
+bdd<-bdd[!bdd$Poids=="NA",]
+
 ```
 
 On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes.

@@ -43,42 +43,146 @@ donnees<-unique(donnees)
 
 Ici, nous avons simplement créer un colonne pour chaque espèce retrouvé sur l'ensemble des points afin de pouvoir inscrire le recouvrement de chaque espèce dans sa colonne respective pour chaque point et ainsi obtenir qu'une seule linge par point. Cela rend la manipulation de données plus simple par la suite.
 
-```{r}
-write_xlsx(donnees,"bdd_equipe4.xlsx")
-```
-
-Pour exporter la base de données afin de la remettre
-
 ------------------------------------------------------------------------
 
 ### Traitement de la base de données pour les analyses statistiques
 
-Premièrement, afin de pouvoir traité chaque espèce/condition dominante autour des points, nous avons divisé l'habitat en plusieurs colonnes. Nous devons donc regroupé ces colonnes au sein d'une seule variable « Habitat »
+Premièrement, plusieurs points n'ont pas pu être échantillonné pour certaines raisons. Nous devons alors exclure ces points de l'analyse statistique.
 
 ```{r}
-bdd<-donnees
-bdd$Habitat <- lapply(seq_len(nrow(bdd)), function(i) {
-  na.omit(as.character(bdd[i, c("Habitat1", "Habitat2", "Habitat3")]))
+bdd<-donnees[!donnees$Poids=="NA",]
+
+#Poids et pente en numeric et sel et sol en factor pour le lm
+bdd$Poids<-as.numeric(bdd$Poids)
+bdd$Pente_degre<-as.numeric(bdd$Pente_degre)
+bdd$Sel<-as.factor(bdd$Sel)
+bdd$Sol<-as.factor(bdd$Sol)
+```
+
+Ensuite pour inclure les données des trois colonnes d'habitat dans une même colonne
+
+```{r}
+bdd$Habitat <- apply(bdd[, c("Habitat1", "Habitat2", "Habitat3")], 1, function(x) {
+  propres <- x[!is.na(x) & x != "NA"]
+  paste(sort(unique(propres)), collapse = "_")
 })
-bdd<-bdd[,!names(bdd) %in% c("Habitat1", "Habitat2", "Habitat3")]
+
 ```
 
-Plusieurs points n'ont pas pu être échantillonné pour certaines raisons. Nous devons alors exclure ces points de l'analyse statistique
+Création d'une table présence/absence de chaque espèce/condition dans les points afin de pouvoir évaluer l'effet du Sel sur le Poids selon la présence de chaque espèce/condition individuellement
 
 ```{r}
-bdd<-bdd[!bdd$Poids=="NA",]
+library(tidyr)
+library(dplyr)
 
+# Base longue à partir des 3 colonnes habitat
+habitat_long <- bdd %>%
+  mutate(ID = row_number()) %>%
+  pivot_longer(cols = starts_with("Habitat"),
+               names_to = "habitat_position",
+               values_to = "Espece") %>%
+  filter(!is.na(Espece) & Espece != "NA") %>%
+  distinct(ID, Espece)
+
+# Table de présence (1 si l'espèce est présente dans l’un des 3 habitats)
+table_presence <- habitat_long %>%
+  mutate(present = 1) %>%
+  pivot_wider(names_from = Espece, values_from = present, values_fill = 0)
+
+# Garder uniquement les espèces individuelles (sans "_")
+habitat_long_filtre <- habitat_long %>%
+  filter(!grepl("_", Espece))
+
+table_presence_filtree <- habitat_long_filtre %>%
+  mutate(present = 1) %>%
+  pivot_wider(names_from = Espece, values_from = present, values_fill = 0)
+
+#Intègre la table de présence à notre bdd
+bdd <- bdd %>%
+  mutate(ID = row_number()) %>%
+  left_join(table_presence_filtree, by = "ID")
+
+#Retire les colonnes d'habitat 
+bdd<-bdd[,!names(bdd) %in% c("Habitat","Habitat1","Habitat2","Habitat3")]
 ```
+
+------------------------------------------------------------------------
 
 ### Analyses statistiques
 
-On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes.
+On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes. Cependant, d'autres variables comme l'habitat, la pente, le recouvrement des différentes espèces peut influencer le poids.
+
+On fait donc une boucle pour évaluer l'impact du traitement au sel sur le poids de la végétation selon la pente et la présence de chaque espèce/condition individuellement.
 
 ```{r}
-sel<-bdd[bdd$Sel==1,]
-sans_sel<-bdd[bdd$Sel==0,]
-#vérificaton de la normalité
+# 1. Définir les colonnes d'espèces
+colonnes_especes <- setdiff(names(table_presence_filtree), "ID")
 
+# 2. Identifier les niveaux valides de Sol (exclure "NA" texte)
+bdd$Sol <- factor(bdd$Sol)
+niveaux_sol <- levels(droplevels(bdd$Sol[bdd$Sol != "NA"]))
+
+# 3. Créer dynamiquement les colonnes pour chaque niveau de sol
+colonnes_coef_sol <- paste0("Coef_Sel_Sol_", niveaux_sol)
+colonnes_pval_sol <- paste0("p_Sel_Sol_", niveaux_sol)
+
+# 4. Initialiser le tableau final
+resultats <- data.frame(
+  Espece = character(),
+  Coef_Interaction_SelEspece = numeric(),
+  p_value_SelEspece = numeric(),
+  Coef_Interaction_SelPente = numeric(),
+  p_value_SelPente = numeric(),
+  matrix(NA, nrow = 0, ncol = length(niveaux_sol)*2, 
+         dimnames = list(NULL, c(colonnes_coef_sol, colonnes_pval_sol))),
+  stringsAsFactors = FALSE
+)
+
+# 5. Boucle principale
+for (espece in colonnes_especes) {
+  espece_bt <- paste0("`", espece, "`")
+  formule <- as.formula(paste("Poids ~ Sel * Pente_degre + Sel * Sol + Sel *", espece_bt))
+  modele <- glm(formule, data = bdd,Gamma(link = "log"))
+  coef_tab <- summary(modele)$coefficients
+  
+  # Interactions Sel:Espece et Sel:Pente
+  ligne_inter_espece <- grep(paste0("Sel.*", espece), rownames(coef_tab), value = TRUE)
+  ligne_inter_pente  <- grep("Sel.*Pente_degre", rownames(coef_tab), value = TRUE)
+  
+  coef_sel_espece <- if (length(ligne_inter_espece) > 0) coef_tab[ligne_inter_espece[1], "Estimate"] else NA
+  p_sel_espece    <- if (length(ligne_inter_espece) > 0) coef_tab[ligne_inter_espece[1], "Pr(>|t|)"] else NA
+  
+  coef_sel_pente <- if (length(ligne_inter_pente) > 0) coef_tab[ligne_inter_pente[1], "Estimate"] else NA
+  p_sel_pente    <- if (length(ligne_inter_pente) > 0) coef_tab[ligne_inter_pente[1], "Pr(>|t|)"] else NA
+
+  # Créer une ligne vide pour les effets Sel:SolX
+  ligne_sol <- setNames(rep(NA, length(niveaux_sol)*2), c(colonnes_coef_sol, colonnes_pval_sol))
+  
+  for (sol in niveaux_sol) {
+    # Nom de la ligne du coef dans le tableau
+    pattern <- paste0("Sel.*Sol", sol)
+    ligne_coef <- grep(pattern, rownames(coef_tab), value = TRUE)
+    
+    if (length(ligne_coef) > 0 && ligne_coef[1] %in% rownames(coef_tab)) {
+      ligne_sol[paste0("Coef_Sel_Sol_", sol)] <- coef_tab[ligne_coef[1], "Estimate"]
+      ligne_sol[paste0("p_Sel_Sol_", sol)]    <- coef_tab[ligne_coef[1], "Pr(>|t|)"]
+    }
+  }
+  
+  # Combiner toutes les colonnes
+  resultats <- rbind(resultats, data.frame(
+    Espece = espece,
+    Coef_Interaction_SelEspece = coef_sel_espece,
+    p_value_SelEspece = p_sel_espece,
+    Coef_Interaction_SelPente = coef_sel_pente,
+    p_value_SelPente = p_sel_pente,
+    t(ligne_sol)
+  ))
+}
+
+print(resultats)
 ```
+
+À partir de ces résultats, il est impossible de déterminer si l'effet du sel est négligeable ou nom en fonction des espèces présentes en un point.
 
 De plus, on cherche à identifier si le traitement au sel peut également affecté la composition de ces communautés végétales

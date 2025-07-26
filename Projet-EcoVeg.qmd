@@ -21,24 +21,22 @@ if(length(packages_to_install)) install.packages(packages_to_install)
 ```{r}
 donnees <- readxl::read_xlsx(here::here("Echantillonnage_sel.xlsx"))
 
-rues<-unique(donnees$Rue)
-for (rue in 1:4) {
-  for (point in 0:29) {
-    subset_donnees <- donnees[donnees$Point == point & donnees$Rue == rues[rue], ]
-    if (nrow(subset_donnees) > 0) {
-      for (i in 17:79) {
-        espece_col <- colnames(donnees)[i]
-        for (j in 1:nrow(subset_donnees)){
-          if (subset_donnees$Espece[j] %in% espece_col){
-          donnees[donnees$Point == point & donnees$Rue == rues[rue],subset_donnees$Espece[j]] <- subset_donnees$Recouvrement[subset_donnees$Espece==subset_donnees$Espece[j]]
-            }
-          }
-        }
-      }
-    }
-  }
-donnees<-donnees[,!names(donnees) %in% c("Espece", "Recouvrement")]
-donnees<-unique(donnees)
+library(dplyr)
+library(tidyr)
+
+donnees<- donnees %>% filter(Espece != "NA")
+
+donnees<- donnees %>%
+  pivot_wider(
+    id_cols = c(ID,Date,Sel,Rue,Point,Sol,Habitat1,Habitat2,Habitat3,Pente_degre,Orientation_route,Cote_prelevement,Tonte,Poids), 
+    names_from = Espece,
+    values_from = Recouvrement,
+  )
+donnees[ , 15:ncol(donnees)] <- lapply(donnees[ , 15:ncol(donnees)], as.numeric)
+
+donnees[ , 15:ncol(donnees)][is.na(donnees[ , 15:ncol(donnees)])] <- 0
+
+
 ```
 
 Ici, nous avons simplement créer un colonne pour chaque espèce retrouvé sur l'ensemble des points afin de pouvoir inscrire le recouvrement de chaque espèce dans sa colonne respective pour chaque point et ainsi obtenir qu'une seule linge par point. Cela rend la manipulation de données plus simple par la suite.
@@ -110,7 +108,88 @@ bdd<-bdd[,!names(bdd) %in% c("Habitat","Habitat1","Habitat2","Habitat3")]
 
 ### Analyses statistiques
 
-On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes. Cependant, d'autres variables comme l'habitat, la pente, le recouvrement des différentes espèces peut influencer le poids.
+On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes. Cependant, d'autres variables comme l'habitat, la pente et le sol peuvent influencer le poids
+
+#### Effet direct du sel sur le poids
+
+```{r}
+colonnes_especes <- names(bdd)[12:74]
+colonnes_habitat <- names(bdd)[75:100]
+
+# Entoure chaque nom avec des backticks
+colonnes_especes_bt <- paste0("`", colonnes_especes, "`")
+colonnes_habitat_bt <- paste0("`", colonnes_habitat, "`")
+
+# Crée la formule complète
+formule <- as.formula(paste(
+  "Poids ~ Sel + Pente_degre + Sol +",
+  paste(c(colonnes_habitat_bt, colonnes_especes_bt), collapse = " + ")
+))
+
+modele_sel <- glm(formule, data = bdd, family = Gamma(link = "log"))
+summary(modele_sel)
+
+
+#On pourrait inclure des interactions dans ce modèle linéaire généralisé si on croit que l'habitat peut avoir un impact sur l'effet du sel sur le poids par exemple
+```
+
+#### Effet du sel sur le recouvrement de différentes espèces (composition de la communauté végétale)
+
+```{r}
+colonnes_especes <- names(bdd)[12:74]
+colonnes_habitats <- names(bdd)[75:100]
+
+library(dplyr)
+library(tidyr)
+
+# Créer un tableau vide pour stocker les résultats
+resultats <- data.frame(
+  Espece = character(),
+  Coef_Sel = numeric(),
+  p_Sel = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (espece in colonnes_especes) {
+  espece_bt <- paste0("`", espece, "`")
+  
+  formule <- as.formula(paste(
+    espece_bt, "~ Sel + Pente_degre + Sol +", 
+    paste0("`", colonnes_habitats, "`", collapse = " + ")
+  ))
+  
+  bdd_temp <- bdd %>%
+    filter(!is.na(.data[[espece]]), .data[[espece]] > 0)
+  
+  if (length(unique(bdd_temp$Sel)) < 2) next
+  
+  modele <- tryCatch({
+    glm(formule, data = bdd_temp, family = Gamma(link = "log"))
+  }, error = function(e) NULL)
+  
+  if (!is.null(modele)) {
+    coef_tab <- summary(modele)$coefficients
+    
+    if ("Seloui" %in% rownames(coef_tab)) {
+      coef_sel <- coef_tab["Seloui", "Estimate"]
+      p_sel <- coef_tab["Seloui", "Pr(>|z|)"]
+    } else {
+      coef_sel <- NA
+      p_sel <- NA
+    }
+    
+    resultats <- rbind(resultats, data.frame(
+      Espece = espece,
+      Coef_Sel = coef_sel,
+      p_Sel = p_sel
+    ))
+  }
+}
+```
+
+#### Est-ce que l'effet du sel du le poids varie en fonction des espèces présentes 
+
+AUTRE PAS FINIT
 
 On fait donc une boucle pour évaluer l'impact du traitement au sel sur le poids de la végétation selon la pente et la présence de chaque espèce/condition individuellement.
 
@@ -182,7 +261,3 @@ for (espece in colonnes_especes) {
 
 print(resultats)
 ```
-
-À partir de ces résultats, il est impossible de déterminer si l'effet du sel est négligeable ou nom en fonction des espèces présentes en un point.
-
-De plus, on cherche à identifier si le traitement au sel peut également affecté la composition de ces communautés végétales

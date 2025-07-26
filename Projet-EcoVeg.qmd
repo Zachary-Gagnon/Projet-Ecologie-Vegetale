@@ -18,6 +18,10 @@ if(length(packages_to_install)) install.packages(packages_to_install)
 
 ### Importation des données brutes
 
+Nous allons importer les donnees brutes. Il est important d'utiliser le fichier excel partagé de données brutes ici et de s'assurer qu'il soit nommer "Echantillonnage_sel"
+
+Nous allons également pivoter toutes les donnees d'Espece et de Recouvrement de chaque points qui étaient originallement inscrites sur plusieurs lignes pour former seulement une colonne par espèce et inscrire leurs recouvrement pour chaque point et donc obtenir seulement une ligne par point. Faites rouler le code et observer l'objet "donnees"
+
 ```{r}
 donnees <- readxl::read_xlsx(here::here("Echantillonnage_sel.xlsx"))
 
@@ -39,7 +43,7 @@ donnees[ , 15:ncol(donnees)][is.na(donnees[ , 15:ncol(donnees)])] <- 0
 
 ```
 
-Ici, nous avons simplement créer un colonne pour chaque espèce retrouvé sur l'ensemble des points afin de pouvoir inscrire le recouvrement de chaque espèce dans sa colonne respective pour chaque point et ainsi obtenir qu'une seule linge par point. Cela rend la manipulation de données plus simple par la suite.
+Cela rend la manipulation de données plus simple par la suite.
 
 ------------------------------------------------------------------------
 
@@ -57,7 +61,9 @@ bdd$Sel<-as.factor(bdd$Sel)
 bdd$Sol<-as.factor(bdd$Sol)
 ```
 
-Ensuite pour inclure les données des trois colonnes d'habitat dans une même colonne
+Ensuite, il est difficile de traités des trois colonnes d'habitat présent dans les données originales puisque certaines valeurs sont identiques pour certains points (exemple que le Frêne est présent à plusieurs points), mais ces valeurs ne sont pas entrée dans les même colonnes, il devient alors difficile de les interpréter ensemble (exemple que le Frêne peut être inscrit dans la colonne Habitat1 pour certains points et la colonne Habitat2 pour d'autres).
+
+Nous allons donc regroupés ces trois valeurs au sein d'une même colonne et retirer les NA.
 
 ```{r}
 bdd$Habitat <- apply(bdd[, c("Habitat1", "Habitat2", "Habitat3")], 1, function(x) {
@@ -67,7 +73,7 @@ bdd$Habitat <- apply(bdd[, c("Habitat1", "Habitat2", "Habitat3")], 1, function(x
 
 ```
 
-Création d'une table présence/absence de chaque espèce/condition dans les points afin de pouvoir évaluer l'effet du Sel sur le Poids selon la présence de chaque espèce/condition individuellement
+À partir de cette colonne, nous pouvons créer une table présence/absence de chaque espèce/condition dans les points afin de pouvoir évaluer l'effet du Sel sur le Poids en contrôlant pour l'effet de chaque espèce/condition sur le Poids.
 
 ```{r}
 library(tidyr)
@@ -104,6 +110,8 @@ bdd <- bdd %>%
 bdd<-bdd[,!names(bdd) %in% c("Habitat","Habitat1","Habitat2","Habitat3")]
 ```
 
+Visualiser l'objet "bdd" pour observer la table de présence de chaque Habitat à la fin du tableau (dernières colonnes)
+
 ------------------------------------------------------------------------
 
 ### Analyses statistiques
@@ -111,6 +119,37 @@ bdd<-bdd[,!names(bdd) %in% c("Habitat","Habitat1","Habitat2","Habitat3")]
 On se rappelle que le but de notre étude est principalement de déterminer si le traitement au sel affecte la biomasse de la végétation bordant ces routes. Cependant, d'autres variables comme l'habitat, la pente et le sol peuvent influencer le poids
 
 #### Effet direct du sel sur le poids
+
+Avant d'évaluer l'effet du sel sur le poids, nous devons déterminer quelle modèle nous allons utiliser. Regardons d'abord comment notre variable dépendante est distribuée.
+
+```{r}
+hist(bdd$Poids)
+```
+
+La variable dépendant Poids a une distribution asymétrique par la droite, semblable à une distribution Gamma. Nous pourrions alors utiliser un glm avec la famille Gamma (link = "log") dans ce cas-ci. Ce modèle peut être utiliser lorsque la variable dépendante est continue et strictement positive et lorsque la variance augmente avec la moyenne. Vérifions si c'est le cas pour la variable Poids.
+
+```{r}
+# Créer des groupes selon les quantiles
+bdd$groupe <- cut(bdd$Poids, breaks = quantile(bdd$Poids, probs = seq(0, 1, 0.2), na.rm = TRUE), include.lowest = TRUE)
+
+# Calculer la moyenne et la variance par groupe
+resume <- bdd %>%
+  group_by(groupe) %>%
+  summarise(
+    moyenne = mean(Poids, na.rm = TRUE),
+    variance = var(Poids, na.rm = TRUE)
+  )
+library(ggplot2)
+
+ggplot(resume, aes(x = moyenne, y = variance)) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_smooth(method = "lm", color = "darkred") +
+  labs(title = "Relation entre moyenne et variance du Poids")
+```
+
+Cela confirme que la variance de la variable Poids augmente ble et bien avec la moyenne. Nous allons donc utiliser le glm Gamma.
+
+Maintenant nous allons tester l'effet du traitement au sel sur le poids de la végétation en contrôlant les autres variables qui peuvent également avoir un effet sur le poids de la végétation (habitat, pente, sol)
 
 ```{r}
 colonnes_especes <- names(bdd)[12:74]
@@ -133,153 +172,358 @@ summary(modele_sel)
 #On pourrait inclure des interactions dans ce modèle linéaire généralisé si on croit que l'habitat peut avoir un impact sur l'effet du sel sur le poids par exemple
 ```
 
+Nous avons inclut les variables comme l'habitat, la pente et le sol qui, selon nous, pouvaient avoir un effet sur le poids de la végétation afin de masquer cette effet et seulement observer l'effet direct du sel sur le poids. Cependant, le p_value de Seloui n'est pas significatif, ce qui indique que l'effet du traitement au sol sur le poids de la végétation n'est pas significatif lorsqu'on contrôle pour la variation causée par les autres facteurs.
+
 #### Effet du sel sur le recouvrement de différentes espèces (composition de la communauté végétale)
 
+Même principe ici, nous devons commencer par déterminer quelle modèle nous devons prendre. Nous savons que les données de recouvrement contiennent beaucoup de 0 et que les recouvrement sont tous des valeurs entières.
+
+Un modèle qui prend en compte ce type de données est un glm de type quasi-poisson. Ce modèle est aussi bon pour les cas de surdispersion, souvent retrouvés en présence de beaucoup de 0, donc lorsque la variance \> moyenne. Vérifions si c'est le cas de nos données.
+
 ```{r}
-library(dplyr)
+# Initialiser le tableau de résultats
+surdisp_resultats <- data.frame(
+  Espece = character(),
+  Moyenne = numeric(),
+  Variance = numeric(),
+  Dispersion = numeric(),
+  Surdispersé = logical(),
+  stringsAsFactors = FALSE
+)
+
+colonnes_especes <- names(bdd)[12:74]
+
+for (espece in colonnes_especes) {
+  donnees_temp <- bdd[[espece]]
+  
+  # Exclure NA
+  donnees_temp <- donnees_temp[!is.na(donnees_temp)]
+  
+  # Si pas assez de données, sauter
+  if (length(donnees_temp) < 10) next
+  
+  moyenne <- mean(donnees_temp)
+  variance <- var(donnees_temp)
+  
+  # Modèle poisson simple sans covariable
+  modele <- glm(donnees_temp ~ 1, family = poisson)
+  
+  # Calcul de la dispersion
+  dispersion <- sum(residuals(modele, type = "pearson")^2) / df.residual(modele)
+  
+  # Détection de surdispersion
+  surdisperse <- dispersion > 1.5
+  
+  # Ajouter au tableau
+  surdisp_resultats <- rbind(surdisp_resultats, data.frame(
+    Espece = espece,
+    Moyenne = moyenne,
+    Variance = variance,
+    Dispersion = round(dispersion, 2),
+    Surdispersé = surdisperse
+  ))
+}
+print(surdisp_resultats)
+```
+
+En effet, si on regarde la dernière colonne de "surdisp_resultats", la majorité de nos espèces présentent de la surdispersion. On utilise alors le modèle Quasi-Poisson pour tester l'effet du traitement au sel sur la composition des communautés végétales. Encore une fois, il faut contrôler pour la variation des communautés causée par d'autres variables comme l'habitat, la pente et le sol.
+
+```{r}
 library(tidyr)
+library(dplyr)
 
 # Définir les colonnes
 colonnes_especes <- names(bdd)[12:74]
 colonnes_habitats <- names(bdd)[75:100]
 
-# Nettoyer la variable Sel
-bdd$Sel <- factor(bdd$Sel, levels = c("non", "oui"))
-bdd$Sol <- droplevels(factor(bdd$Sol))
 
-# Créer un tableau pour stocker les résultats
-resultats_espece <- data.frame(
+# Créer le tableau final
+resultats <- data.frame(
   Espece = character(),
   Coef_Sel = numeric(),
   p_Sel = numeric(),
+  n_obs = integer(),
+  Converge = logical(),
+  stringsAsFactors = FALSE
+)
+
+# Boucle par espèce
+for (espece in colonnes_especes) {
+  
+  coef_sel <- NA
+  p_sel <- NA
+  n_obs <- NA
+  a_converge <- FALSE
+  
+  espece_bt <- paste0("`", espece, "`")
+  
+  formule <- as.formula(paste(
+    espece_bt, "~ Sel + Pente_degre + Sol +",
+    paste0("`", colonnes_habitats, "`", collapse = " + ")
+  ))
+  
+  bdd_temp <- bdd %>%
+    filter(!is.na(.data[[espece]]))
+  
+  n_obs <- nrow(bdd_temp)
+  
+  if (n_obs < 10 || length(unique(bdd_temp$Sel)) < 2) {
+    resultats <- rbind(resultats, data.frame(
+      Espece = espece,
+      Coef_Sel = coef_sel,
+      p_Sel = p_sel,
+      n_obs = n_obs,
+      Converge = a_converge
+    ))
+    next
+  }
+  
+  modele <- tryCatch({
+    glm(formule, data = bdd_temp, family = quasipoisson(link = "log"))
+  }, error = function(e) NULL)
+  
+  if (!is.null(modele)) {
+    a_converge <- modele$converged  # ← ici on teste si le modèle a convergé
+    
+    coef_tab <- summary(modele)$coefficients
+    ligne_sel <- grep("^Seloui$", rownames(coef_tab), value = TRUE)
+    
+    if (length(ligne_sel) > 0) {
+      coef_sel <- coef_tab[ligne_sel[1], "Estimate"]
+      col_pvalue <- grep("^Pr\\(>.*\\)", colnames(coef_tab), value = TRUE)
+      if (length(col_pvalue) > 0) {
+        p_sel <- coef_tab[ligne_sel[1], col_pvalue[1]]
+      }
+    }
+  }
+  
+  # Ajouter la ligne à resultats
+  resultats <- rbind(resultats, data.frame(
+    Espece = espece,
+    Coef_Sel = coef_sel,
+    p_Sel = p_sel,
+    n_obs = n_obs,
+    Converge = a_converge
+  ))
+}
+resultats <- resultats %>%
+  mutate(Significatif = ifelse(Converge == TRUE & !is.na(p_Sel) & p_Sel < 0.05, "oui", "non"))
+
+resultats_significatifs <- resultats %>%
+  filter(Converge == TRUE, !is.na(p_Sel), p_Sel < 0.05)
+resultats_significatifs <- resultats_significatifs %>%
+  arrange(p_Sel)
+resultats_significatifs <- resultats_significatifs %>%
+  mutate(Effet_Mult = round(exp(Coef_Sel), 3))
+
+print(resultats_significatifs)
+```
+
+Dans l'objet "resultats_significatifs", el traitement au sel à un effet significatif sur seulement deux espèces, mais on remarque également que l'effet multiplicatif du traitement au sel sur ces espèces (Effet_Mult) est minime (respectivement 0.000 et 0.039) = 3,9% en présence de sel pour la Mentha sp.
+
+Un autre modèle qui prend en compte la surdispersion est le modèle Binomial Négatif. Nous pouvons donc tester si ce modèle correspond mieux à nos données
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(MASS)  # pour glm.nb()
+
+`%||%` <- function(a, b) {
+  if (!is.null(a)) a else b
+}
+
+# Colonnes
+colonnes_especes <- names(bdd)[12:74]
+colonnes_habitats <- names(bdd)[75:100]
+
+# Résultats pour modèle NB
+resultats_nb <- data.frame(
+  Espece = character(),
+  Coef_Sel = numeric(),
+  p_Sel = numeric(),
+  n_obs = integer(),
+  Converge = logical(),
   stringsAsFactors = FALSE
 )
 
 # Boucle sur chaque espèce
 for (espece in colonnes_especes) {
   
+  coef_sel <- NA
+  p_sel <- NA
+  n_obs <- NA
+  a_converge <- FALSE
+  
   espece_bt <- paste0("`", espece, "`")
   
-  # Formule dynamique
   formule <- as.formula(paste(
     espece_bt, "~ Sel + Pente_degre + Sol +",
     paste0("`", colonnes_habitats, "`", collapse = " + ")
   ))
   
-  # Nettoyage : enlever les NA et valeurs ≤ 0
   bdd_temp <- bdd %>%
-    filter(!is.na(.data[[espece]]), .data[[espece]] > 0)
+    filter(!is.na(.data[[espece]]))
   
-  # Vérifier que Sel a 2 niveaux
-  if (length(unique(bdd_temp$Sel)) < 2) next
+  n_obs <- nrow(bdd_temp)
+  if (n_obs < 10 || length(unique(bdd_temp$Sel)) < 2) {
+    resultats_nb <- rbind(resultats_nb, data.frame(
+      Espece = espece,
+      Coef_Sel = coef_sel,
+      p_Sel = p_sel,
+      n_obs = n_obs,
+      Converge = a_converge
+    ))
+    next
+  }
   
-  # Ajuster le modèle
   modele <- tryCatch({
-    glm(formule, data = bdd_temp, family = Gamma(link = "log"))
+    glm.nb(formule, data = bdd_temp)
   }, error = function(e) NULL)
   
-  # Extraire les coefficients si modèle valide
   if (!is.null(modele)) {
+    a_converge <- modele$converged %||% TRUE  # glm.nb ne donne pas toujours $converged
+    
     coef_tab <- summary(modele)$coefficients
     ligne_sel <- grep("^Seloui$", rownames(coef_tab), value = TRUE)
     
     if (length(ligne_sel) > 0) {
       coef_sel <- coef_tab[ligne_sel[1], "Estimate"]
-      
-      # Trouver dynamiquement le nom de la colonne p-value
       col_pvalue <- grep("^Pr\\(>.*\\)", colnames(coef_tab), value = TRUE)
-      
       if (length(col_pvalue) > 0) {
         p_sel <- coef_tab[ligne_sel[1], col_pvalue[1]]
-      } else {
-        p_sel <- NA
       }
-    } else {
-      coef_sel <- NA
-      p_sel <- NA
-    }
-    
-    # Ajouter à la table
-    resultats_espece <- rbind(resultats_espece, data.frame(
-      Espece = espece,
-      Coef_Sel = coef_sel,
-      p_Sel = p_sel
-    ))
-  }
-}
-```
-
-#### Est-ce que l'effet du sel du le poids varie en fonction des espèces présentes
-
-AUTRE PAS FINIT
-
-On fait donc une boucle pour évaluer l'impact du traitement au sel sur le poids de la végétation selon la pente et la présence de chaque espèce/condition individuellement.
-
-```{r}
-# 1. Définir les colonnes d'espèces
-colonnes_especes <- setdiff(names(table_presence_filtree), "ID")
-
-# 2. Identifier les niveaux valides de Sol (exclure "NA" texte)
-bdd$Sol <- factor(bdd$Sol)
-niveaux_sol <- levels(droplevels(bdd$Sol[bdd$Sol != "NA"]))
-
-# 3. Créer dynamiquement les colonnes pour chaque niveau de sol
-colonnes_coef_sol <- paste0("Coef_Sel_Sol_", niveaux_sol)
-colonnes_pval_sol <- paste0("p_Sel_Sol_", niveaux_sol)
-
-# 4. Initialiser le tableau final
-resultats <- data.frame(
-  Espece = character(),
-  Coef_Interaction_SelEspece = numeric(),
-  p_value_SelEspece = numeric(),
-  Coef_Interaction_SelPente = numeric(),
-  p_value_SelPente = numeric(),
-  matrix(NA, nrow = 0, ncol = length(niveaux_sol)*2, 
-         dimnames = list(NULL, c(colonnes_coef_sol, colonnes_pval_sol))),
-  stringsAsFactors = FALSE
-)
-
-# 5. Boucle principale
-for (espece in colonnes_especes) {
-  espece_bt <- paste0("`", espece, "`")
-  formule <- as.formula(paste("Poids ~ Sel * Pente_degre + Sel * Sol + Sel *", espece_bt))
-  modele <- glm(formule, data = bdd,Gamma(link = "log"))
-  coef_tab <- summary(modele)$coefficients
-  
-  # Interactions Sel:Espece et Sel:Pente
-  ligne_inter_espece <- grep(paste0("Sel.*", espece), rownames(coef_tab), value = TRUE)
-  ligne_inter_pente  <- grep("Sel.*Pente_degre", rownames(coef_tab), value = TRUE)
-  
-  coef_sel_espece <- if (length(ligne_inter_espece) > 0) coef_tab[ligne_inter_espece[1], "Estimate"] else NA
-  p_sel_espece    <- if (length(ligne_inter_espece) > 0) coef_tab[ligne_inter_espece[1], "Pr(>|t|)"] else NA
-  
-  coef_sel_pente <- if (length(ligne_inter_pente) > 0) coef_tab[ligne_inter_pente[1], "Estimate"] else NA
-  p_sel_pente    <- if (length(ligne_inter_pente) > 0) coef_tab[ligne_inter_pente[1], "Pr(>|t|)"] else NA
-
-  # Créer une ligne vide pour les effets Sel:SolX
-  ligne_sol <- setNames(rep(NA, length(niveaux_sol)*2), c(colonnes_coef_sol, colonnes_pval_sol))
-  
-  for (sol in niveaux_sol) {
-    # Nom de la ligne du coef dans le tableau
-    pattern <- paste0("Sel.*Sol", sol)
-    ligne_coef <- grep(pattern, rownames(coef_tab), value = TRUE)
-    
-    if (length(ligne_coef) > 0 && ligne_coef[1] %in% rownames(coef_tab)) {
-      ligne_sol[paste0("Coef_Sel_Sol_", sol)] <- coef_tab[ligne_coef[1], "Estimate"]
-      ligne_sol[paste0("p_Sel_Sol_", sol)]    <- coef_tab[ligne_coef[1], "Pr(>|t|)"]
     }
   }
   
-  # Combiner toutes les colonnes
-  resultats <- rbind(resultats, data.frame(
+  resultats_nb <- rbind(resultats_nb, data.frame(
     Espece = espece,
-    Coef_Interaction_SelEspece = coef_sel_espece,
-    p_value_SelEspece = p_sel_espece,
-    Coef_Interaction_SelPente = coef_sel_pente,
-    p_value_SelPente = p_sel_pente,
-    t(ligne_sol)
+    Coef_Sel = coef_sel,
+    p_Sel = p_sel,
+    n_obs = n_obs,
+    Converge = a_converge
   ))
 }
 
-print(resultats)
+# Ajouter colonne significatif
+resultats_nb <- resultats_nb %>%
+  mutate(Significatif = ifelse(Converge == TRUE & !is.na(p_Sel) & p_Sel < 0.05, "oui", "non"))
+
+# Extraire les espèces significatives
+resultats_nb_significatifs <- resultats_nb %>%
+  filter(Converge == TRUE, !is.na(p_Sel), p_Sel < 0.05) %>%
+  arrange(p_Sel) %>%
+  mutate(Effet_Mult = round(exp(Coef_Sel), 3))
+
+# Afficher
+print(resultats_nb_significatifs)
 ```
+
+Pour le Binomial Négatif, on obtient des résultats significatif seulement pour Equisetum arvense avec un effet mutiliplicatif de \> 1%. Ce n'est pas vraiment plus concluant.
+
+Dans les deux modèles, on peut observer que le modèle ne "converge pas" pour certaines espèces, ce qui est probablement causé par une manque de données pour cette espèce et une trop faible variabilité. Cela signifie que nous ne devons pas interprété les valeurs des test-statistiques de ces valeurs puisqu'elles pourraient être faussées.
+
+#### Est-ce que l'effet du sel du le poids varie en fonction des espèces présentes
+
+Finalement, on peut essayer de déterminer si l'effet du sel sur le poids (qui n'est pas significatif d'ailleurs) dépend de la présence de certaines espèce. En effet, un espèce adaptée au traitement au sel pourrait mener à une biomasse plus élevée, malgré la présence de sel. Il faut également masquer la variation causée par l'habitat, le sol et la pente. Nous utilisons un glm Gamma.
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+# Définir les colonnes
+colonnes_especes <- names(bdd)[12:74]         # Recouvrement des espèces
+colonnes_habitats <- names(bdd)[75:100]       # Variables d’habitat
+
+# Nettoyage des facteurs
+bdd$Sel <- factor(bdd$Sel, levels = c("non", "oui"))
+bdd$Sol <- droplevels(factor(bdd$Sol))
+
+# Initialiser les résultats
+resultats_interaction_especes <- data.frame(
+  Espece = character(),
+  Coef_Sel_Espece = numeric(),
+  p_Sel_Espece = numeric(),
+  n_obs = integer(),
+  Converge = logical(),
+  stringsAsFactors = FALSE
+)
+
+# Début de la boucle
+for (espece in colonnes_especes) {
+  
+  coef_inter <- NA
+  p_inter <- NA
+  n_obs <- NA
+  a_converge <- FALSE
+  
+  espece_bt <- paste0("`", espece, "`")
+  
+  # Formule avec interaction Sel * recouvrement de l'espèce
+  formule <- as.formula(paste(
+    "Poids ~ Sel *", espece_bt, "+ Pente_degre + Sol +",
+    paste0("`", colonnes_habitats, "`", collapse = " + ")
+  ))
+  
+  # Sous-ensemble de données pour l'espèce
+  bdd_temp <- bdd %>%
+    filter(!is.na(.data[[espece]]), Poids > 0)
+  
+  n_obs <- nrow(bdd_temp)
+  
+  if (n_obs < 10 || length(unique(bdd_temp$Sel)) < 2) {
+    resultats_interaction_especes <- rbind(resultats_interaction_especes, data.frame(
+      Espece = espece,
+      Coef_Sel_Espece = coef_inter,
+      p_Sel_Espece = p_inter,
+      n_obs = n_obs,
+      Converge = a_converge
+    ))
+    next
+  }
+  
+  modele <- tryCatch({
+    glm(formule, data = bdd_temp, family = Gamma(link = "log"))
+  }, error = function(e) NULL)
+  
+  if (!is.null(modele)) {
+    a_converge <- modele$converged %||% TRUE
+    
+    coef_tab <- summary(modele)$coefficients
+    
+    # Cherche l’interaction Sel:Espece
+    ligne_inter <- grep(paste0("Seloui:", espece), rownames(coef_tab), fixed = TRUE)
+    
+    if (length(ligne_inter) > 0) {
+      coef_inter <- coef_tab[ligne_inter[1], "Estimate"]
+      col_pvalue <- grep("^Pr\\(>.*\\)", colnames(coef_tab), value = TRUE)
+      if (length(col_pvalue) > 0) {
+        p_inter <- coef_tab[ligne_inter[1], col_pvalue[1]]
+      }
+    }
+  }
+  
+  # Ajoute au tableau
+  resultats_interaction_especes <- rbind(resultats_interaction_especes, data.frame(
+    Espece = espece,
+    Coef_Sel_Espece = coef_inter,
+    p_Sel_Espece = p_inter,
+    n_obs = n_obs,
+    Converge = a_converge
+  ))
+}
+
+# Marque significatif
+resultats_interaction_especes <- resultats_interaction_especes %>%
+  mutate(Significatif = ifelse(Converge & !is.na(p_Sel_Espece) & p_Sel_Espece < 0.05, "oui", "non"))
+
+# Filtre les résultats significatifs
+resultats_interaction_significatifs <- resultats_interaction_especes %>%
+  filter(Significatif == "oui") %>%
+  arrange(p_Sel_Espece) %>%
+  mutate(Effet_Mult = round(exp(Coef_Sel_Espece), 3))
+
+# Affiche les résultats significatifs
+print(resultats_interaction_significatifs)
+```
+
+On remarque que aucun résultats n'est significatif, donc que l'effet du sel sur le poids ne dépend pas de certaines espèces.

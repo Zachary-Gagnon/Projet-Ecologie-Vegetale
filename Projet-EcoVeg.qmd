@@ -136,49 +136,71 @@ summary(modele_sel)
 #### Effet du sel sur le recouvrement de différentes espèces (composition de la communauté végétale)
 
 ```{r}
-colonnes_especes <- names(bdd)[12:74]
-colonnes_habitats <- names(bdd)[75:100]
-
 library(dplyr)
 library(tidyr)
 
-# Créer un tableau vide pour stocker les résultats
-resultats <- data.frame(
+# Définir les colonnes
+colonnes_especes <- names(bdd)[12:74]
+colonnes_habitats <- names(bdd)[75:100]
+
+# Nettoyer la variable Sel
+bdd$Sel <- factor(bdd$Sel, levels = c("non", "oui"))
+bdd$Sol <- droplevels(factor(bdd$Sol))
+
+# Créer un tableau pour stocker les résultats
+resultats_espece <- data.frame(
   Espece = character(),
   Coef_Sel = numeric(),
   p_Sel = numeric(),
   stringsAsFactors = FALSE
 )
 
+# Boucle sur chaque espèce
 for (espece in colonnes_especes) {
+  
   espece_bt <- paste0("`", espece, "`")
   
+  # Formule dynamique
   formule <- as.formula(paste(
-    espece_bt, "~ Sel + Pente_degre + Sol +", 
+    espece_bt, "~ Sel + Pente_degre + Sol +",
     paste0("`", colonnes_habitats, "`", collapse = " + ")
   ))
   
+  # Nettoyage : enlever les NA et valeurs ≤ 0
   bdd_temp <- bdd %>%
     filter(!is.na(.data[[espece]]), .data[[espece]] > 0)
   
+  # Vérifier que Sel a 2 niveaux
   if (length(unique(bdd_temp$Sel)) < 2) next
   
+  # Ajuster le modèle
   modele <- tryCatch({
     glm(formule, data = bdd_temp, family = Gamma(link = "log"))
   }, error = function(e) NULL)
   
+  # Extraire les coefficients si modèle valide
   if (!is.null(modele)) {
     coef_tab <- summary(modele)$coefficients
+    ligne_sel <- grep("^Seloui$", rownames(coef_tab), value = TRUE)
     
-    if ("Seloui" %in% rownames(coef_tab)) {
-      coef_sel <- coef_tab["Seloui", "Estimate"]
-      p_sel <- coef_tab["Seloui", "Pr(>|z|)"]
+    if (length(ligne_sel) > 0) {
+      coef_sel <- coef_tab[ligne_sel[1], "Estimate"]
+      
+      # Trouver dynamiquement le nom de la colonne p-value
+      col_pvalue <- grep("^Pr\\(>.*\\)", colnames(coef_tab), value = TRUE)
+      
+      if (length(col_pvalue) > 0) {
+        p_sel <- coef_tab[ligne_sel[1], col_pvalue[1]]
+      } else {
+        p_sel <- NA
+      }
     } else {
       coef_sel <- NA
       p_sel <- NA
     }
     
-    resultats <- rbind(resultats, data.frame(
+    # Ajouter à la table
+    resultats_espece <- rbind(resultats_espece, data.frame(
       Espece = espece,
       Coef_Sel = coef_sel,
       p_Sel = p_sel
@@ -187,7 +209,7 @@ for (espece in colonnes_especes) {
 }
 ```
 
-#### Est-ce que l'effet du sel du le poids varie en fonction des espèces présentes 
+#### Est-ce que l'effet du sel du le poids varie en fonction des espèces présentes
 
 AUTRE PAS FINIT
 

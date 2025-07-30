@@ -8,7 +8,7 @@ editor: visual
 ### Vérification et installation des packages manquants si nécessaire
 
 ```{r}
-packages_needed<-c("tidyverse", "readxl", "sf", "ggspatial", "patchwork", "janitor", "tinytable", "here", "cowplot", "writexl") 
+packages_needed<-c("tidyverse", "readxl", "sf", "ggspatial", "patchwork", "janitor", "tinytable", "here", "cowplot", "writexl","visreg") 
 
 packages_to_install <- packages_needed[!(packages_needed %in% installed.packages()[,"Package"])]
 if(length(packages_to_install)) install.packages(packages_to_install)
@@ -286,14 +286,14 @@ for (espece in colonnes_especes) {
     next
   }
   
-  modele <- tryCatch({
+  modele_recouvrement <- tryCatch({
     glm(formule, data = bdd_temp, family = quasipoisson(link = "log"))
   }, error = function(e) NULL)
   
   if (!is.null(modele)) {
-    a_converge <- modele$converged  # ← ici on teste si le modèle a convergé
+    a_converge <- modele_recouvrement$converged  # ← ici on teste si le modèle a convergé
     
-    coef_tab <- summary(modele)$coefficients
+    coef_tab <- summary(modele_recouvrement)$coefficients
     ligne_sel <- grep("^Seloui$", rownames(coef_tab), value = TRUE)
     
     if (length(ligne_sel) > 0) {
@@ -332,67 +332,56 @@ Dans l'objet "resultats_significatifs", el traitement au sel à un effet signifi
 Visualisons les résultats
 
 ```{r}
-library(ggplot2)
 library(dplyr)
+library(visreg)
 
-# On suppose que `resultats_significatifs` contient une colonne `Espece`
-# et que ton jeu de données s’appelle `bdd`
+# Étape 1 — Nettoyer les noms de colonnes pour qu'ils soient valides dans les formules
+noms_orig <- names(bdd)
+names(bdd) <- make.names(names(bdd))  # remplace les espaces, parenthèses, etc. par des points
 
-# On boucle sur les espèces significatives
-for (espece in resultats_significatifs$Espece) {
+# Recréer les vecteurs avec les nouveaux noms valides
+colonnes_especes <- names(bdd)[12:74]
+colonnes_habitats <- names(bdd)[75:100]
 
-  espece_label <- espece  # nom pour affichage
-  espece_col <- paste0("`", espece, "`")  # sécurité pour noms avec espace
+# Dictionnaire pour restaurer les noms originaux dans les titres
+noms_affichage <- setNames(noms_orig[match(colonnes_especes, make.names(noms_orig))], colonnes_especes)
 
-  # Filtrer les données
-  bdd_plot <- bdd %>%
-    filter(!is.na(.data[[espece]])) %>%
-    select(Sel, !!sym(espece)) %>%
-    rename(Recouvrement = !!sym(espece))
+# Étape 2 — Sélectionner les espèces significatives à afficher (ex : Alnus sp. et Mentha sp.)
+# → on suppose ici que resultats_significatifs a été calculé avec les noms "propres"
+especes_cibles <- c("Alnus.sp.", "Mentha.sp.")
 
-  # Créer le graphique
-  p <- ggplot(bdd_plot, aes(x = Sel, y = Recouvrement, fill = Sel)) +
-    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
-    geom_jitter(width = 0.2, alpha = 0.4, color = "black") +
-    labs(
-      title = paste("Effet du sel sur le recouvrement de :", espece_label),
-      x = "Traitement au sel",
-      y = "Recouvrement (%)"
-    ) +
-    theme_minimal(base_size = 13) +
-    theme(legend.position = "none")
+# Étape 3 — Boucle pour ajuster le modèle et afficher le visreg pour chaque espèce cible
+for (espece in especes_cibles) {
+  
+  # Créer la formule dynamiquement avec les noms déjà valides
+  formule <- as.formula(paste0(
+    espece, " ~ Sel + Pente_degre + Sol + ",
+    paste(colonnes_habitats, collapse = " + ")
+  ))
 
-  print(p)  # Affiche le graphique dans la console R
+  # Filtrer les données sans NA pour cette espèce
+  bdd_temp <- bdd %>%
+    filter(!is.na(.data[[espece]]))
+
+  # Ajuster le modèle
+  modele <- tryCatch({
+    glm(formule, data = bdd_temp, family = quasipoisson(link = "log"))
+  }, error = function(e) NULL)
+
+  # Si le modèle a fonctionné, on affiche le graphique
+  if (!is.null(modele) && modele$converged) {
+    print(
+      visreg(modele, "Sel",
+             type = "conditional",
+             scale = "response",
+             main = paste("Effet du sel sur", noms_affichage[espece]),
+             ylab = paste("Recouvrement de", noms_affichage[espece]),
+             xlab = "Traitement au sel")
+    )
+  }
 }
 
-```
 
-```{r}
-library(ggplot2)
-library(dplyr)
-
-# Si ton tableau s'appelle déjà `resultats_significatifs`, on le prépare :
-resultats_plot <- resultats_significatifs %>%
-  arrange(Effet_Mult) %>%
-  mutate(
-    Espece = factor(Espece, levels = Espece),  # tri dans le plot
-    Direction = ifelse(Coef_Sel > 0, "Effet positif", "Effet négatif")
-  )
-
-# Graphique
-ggplot(resultats_plot, aes(x = Effet_Mult, y = Espece, color = Direction)) +
-  geom_point(size = 3) +
-  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
-  scale_color_manual(values = c("Effet positif" = "forestgreen", "Effet négatif" = "firebrick")) +
-  labs(
-    title = "Effet du sel sur le recouvrement des espèces (quasi-Poisson)",
-    subtitle = "Espèces significatives uniquement (p < 0.05)",
-    x = "Effet multiplicatif (exp(Coef_Sel))",
-    y = "Espèce",
-    color = "Type d'effet"
-  ) +
-  theme_minimal(base_size = 12) +
-geom_text(aes(label = round(Effet_Mult, 5)), hjust = 1.2, color = "black", size = 3)
 ```
 
 Un autre modèle qui prend en compte la surdispersion est le modèle Binomial Négatif. Nous pouvons donc tester si ce modèle correspond mieux à nos données

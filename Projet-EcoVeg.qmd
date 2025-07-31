@@ -160,6 +160,20 @@ Cela confirme que la variance de la variable Poids augmente ble et bien avec la 
 Maintenant nous allons tester l'effet du traitement au sel sur le poids de la végétation en contrôlant les autres variables qui peuvent également avoir un effet sur le poids de la végétation (habitat, pente, sol)
 
 ```{r}
+modele_sel2<-glm(Poids~Sel, data = bdd, family = Gamma(link="log"))
+summary(modele_sel2)
+
+library(visreg)
+visreg(modele_sel2, "Sel",
+             type = "conditional",
+             scale = "response",
+             main = paste("Effets totaux du sel sur la biomasse"),
+             ylab = paste("Biomasse (g)"),
+             xlab = "Traitement au sel")
+
+```
+
+```{r}
 colonnes_especes <- names(bdd)[12:74]
 colonnes_habitat <- names(bdd)[75:100]
 
